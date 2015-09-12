@@ -85,24 +85,38 @@ def depthFirstSearch(problem):
     """
     "*** YOUR CODE HERE ***"
     #util.raiseNotDefined()
-    Stack dfsStack;
+    
+    dfsStack =util.Stack()
     result=[]
-    dict={}
-    Set visited;
-    dfsStack.push(problem.getStartState)
-    while !dfsStack.isEmpty():
+    dfsDict={}
+    visited =set()
+    lastNode=None
+    found=False
+    dfsStack.push(problem.getStartState())
+
+    while not dfsStack.isEmpty():
         cur =dfsStack.pop()
         if problem.isGoalState(cur):
-            return result
-        problem.getSuccessors(cur)
-    return result
+            found=True
+            lastNode=cur
+            break       
+        visited.add(cur)
+        sucs = problem.getSuccessors(cur)
+        for suc in sucs:
+            if suc[0] not in visited:
+                dfsStack.push(suc[0])
+                dfsDict[suc[0]]=(cur,suc[1])
+    if found:
+        while lastNode in dfsDict:
+            temp=dfsDict[lastNode] 
+            result.append(temp[1])
+            lastNode=temp[0]
+        result.reverse()
+        return result   
+    else:            
+        return result
 
 
-    print "Start:", problem.getStartState()
-    print "Is the start a goal?", problem.isGoalState(problem.getStartState())
-    print "Start's successors:", problem.getSuccessors(problem.getStartState())
-
-def dfsFirstSearchHelper()
 
 
 def breadthFirstSearch(problem):
