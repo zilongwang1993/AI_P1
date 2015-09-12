@@ -155,6 +155,7 @@ def breadthFirstSearch(problem):
         state, action = previousStateAndAction[state]
         path.append(action)
     path.reverse()
+    return path
 
 def uniformCostSearch(problem):
     "Search the node of least total cost first. "
@@ -206,7 +207,7 @@ def aStarSearch(problem, heuristic=nullHeuristic):
     # tuple step := (state, previousStep, action, totalCost)
     state = problem.getStartState()
     step = (state, None, None, 0.0)
-    fringeSteps.push(step, step[3] + heuristic(state))
+    fringeSteps.push(step, step[3] + heuristic(state, problem))
     goalStep = None
     while not fringeSteps.isEmpty():
         # As the while loop proceeds, the value of cost+heuristic is always increasing
@@ -221,7 +222,7 @@ def aStarSearch(problem, heuristic=nullHeuristic):
             # add its neighbors to the heap
             for successorState, action, cost in problem.getSuccessors(state):
                 successorStep = (successorState, step, action, step[3] + cost)
-                fringeSteps.push(successorStep, successorStep[3] + heuristic(successorState))
+                fringeSteps.push(successorStep, successorStep[3] + heuristic(successorState, problem))
     if goalStep is None:
         return None
     path = []
