@@ -111,7 +111,37 @@ def breadthFirstSearch(problem):
     [2nd Edition: p 73, 3rd Edition: p 82]
     """
     "*** YOUR CODE HERE ***"
-    util.raiseNotDefined()
+    scheduled = {}
+    previousStateAndAction = {}
+    fringeStates = util.Queue()
+    # initialize with the start state
+    state = problem.getStartState()
+    scheduled[state] = True
+    previousStateAndAction[state] = None
+    fringeStates.push(state)
+    goalState = None
+    while not fringeStates.isEmpty():
+        # get the oldest element in the fringe
+        state = fringeStates.pop()
+        if problem.isGoalState(state):
+            goalState = state
+            break
+        # explore the successors of that state and add them to the fringe
+        for successorState, action, cost in problem.getSuccessors(state):
+            if successorState not in scheduled:
+                scheduled[successorState] = True
+                previousStateAndAction[successorState] = (state, action)
+                fringeStates.push(successorState)
+    if goalState is None:
+        return None
+    # track predecessors to get the path
+    path = []
+    state = goalState
+    while previousStateAndAction[state] is not None:
+        state, action = previousStateAndAction[state]
+        print action
+        path.append(action)
+    path.reverse()
 
 def uniformCostSearch(problem):
     "Search the node of least total cost first. "
