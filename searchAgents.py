@@ -451,11 +451,28 @@ def generateDistMaps(problem):
     """
     gameState = problem.startingGameState
     wallMap = gameState.getWalls()
-    foods = util.matrixAsList(gameState.getFoods())
-    height = walls.height
-    width = walls.width
-    distMaps = []
+    foodMap = gameState.getFood()
+    height = foodMap.height
+    width = foodMap.width
+    foods = [(x1, y1) for x1 in range(width) for y1 in range(height) if foodMap[x1][y1]]
+    distMaps = {}
     
+    for xFood, yFood in foods:
+        distMap = [[None]*height for x in range(width)]
+        # distMaps[(xFood, yFood)][x][y] should be the distance in the maze from (xFood, yFood) to (x, y)
+        offsets = [(-1, 0), (0, -1), (0, 1), (1, 0)]
+        # do BFS to fill the distMap
+        bfsQueue = util.Queue()
+        bfsQueue.push((xFood, yFood, 0))
+        while not bfsQueue.isEmpty():
+            x, y, dist = bfsQueue.pop()
+            if distMap[x][y] is None:
+                distMap[x][y] = dist
+                for dx, dy in offsets:
+                    if not wallMap[x + dx][y + dy]:
+                        bfsQueue.push((x + dx, y + dy, dist + 1))
+        distMaps[(xFood, yFood)] = distMap
+    return distMaps
 
 def foodHeuristic(state, problem):
     """
@@ -487,7 +504,16 @@ def foodHeuristic(state, problem):
     if 'distMaps' not in problem.heuristicInfo:
         problem.heuristicInfo['distMaps'] = generateDistMaps(problem)
     distMaps = problem.heuristicInfo['distMaps']
-    return 0
+    
+    x, y = state[0]
+    foodMap = state[1]
+    height = foodMap.height
+    width = foodMap.width
+    remainingFoods = [(x1, y1) for x1 in range(width) for y1 in range(height) if foodMap[x1][y1]]
+    maxdist = 0
+    for food in remainingFoods:
+        maxdist = max(maxdist, distMaps[food][x][y])
+    return maxdist
 
 class ClosestDotSearchAgent(SearchAgent):
     "Search for all food using a sequence of searches"
