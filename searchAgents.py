@@ -276,16 +276,19 @@ class CornersProblem(search.SearchProblem):
         self._expanded = 0 # Number of search nodes expanded
 
         "*** YOUR CODE HERE ***"
+        self.startingState = (self.startingPosition, (0, 0, 0, 0))
+        self.verticalDist = top - 1
+        self.horizontalDist = right - 1
 
     def getStartState(self):
         "Returns the start state (in your state space, not the full Pacman state space)"
-        "*** YOUR CODE HERE ***"
-        util.raiseNotDefined()
+        "*** YOUR CODE HERE ***" 
+        return self.startingState
 
     def isGoalState(self, state):
         "Returns whether this search state is a goal state of the problem"
         "*** YOUR CODE HERE ***"
-        util.raiseNotDefined()
+        return sum(state[1]) == 4
 
     def getSuccessors(self, state):
         """
@@ -309,6 +312,18 @@ class CornersProblem(search.SearchProblem):
             #   hitsWall = self.walls[nextx][nexty]
 
             "*** YOUR CODE HERE ***"
+            x,y = state[0]
+            dx, dy = Actions.directionToVector(action)
+            nextx, nexty = int(x + dx), int(y + dy)
+            if not self.walls[nextx][nexty]:
+                cornerStates = list(state[1])
+                if (nextx, nexty) in self.corners:
+                    foodIndex = self.corners.index((nextx, nexty))
+                    cornerStates[foodIndex] = 1
+                nextState = ((nextx, nexty), tuple(cornerStates))
+                cost = 1
+                successors.append( ( nextState, action, cost) )
+
 
         self._expanded += 1
         return successors
@@ -344,6 +359,26 @@ def cornersHeuristic(state, problem):
     walls = problem.walls # These are the walls of the maze, as a Grid (game.py)
 
     "*** YOUR CODE HERE ***"
+    numFoodsLeft = 4 - sum(state[1])
+    foodIndices = [x for x in range(4) if state[1][x] == 0]
+    if numFoodsLeft == 0:
+        return 0
+    elif numFoodsLeft == 1:
+        return util.manhattanDistance(state[0], corners[foodIndices[0]])
+    elif numFoodsLeft == 2:
+        return (min([util.manhattanDistance(state[0], corners[i]) for i in foodIndices])
+            + util.manhattanDistance(corners[foodIndices[0]], corners[foodIndices[1]]))
+    elif numFoodsLeft == 3:
+        if 0 in foodIndices and 3 in foodIndices:
+            opposites = [0, 3]
+        else:
+            opposites = [1, 2]
+        return (min([util.manhattanDistance(state[0], corners[i]) for i in opposites])
+            + problem.verticalDist + problem.horizontalDist)
+    elif numFoodsLeft == 4:
+        return (min([util.manhattanDistance(state[0], corners[i]) for i in foodIndices])
+            + problem.verticalDist + problem.horizontalDist + min(problem.verticalDist, problem.horizontalDist))
+            
     return 0 # Default to trivial solution
 
 class AStarCornersAgent(SearchAgent):
@@ -408,6 +443,20 @@ class AStarFoodSearchAgent(SearchAgent):
         self.searchFunction = lambda prob: search.aStarSearch(prob, foodHeuristic)
         self.searchType = FoodSearchProblem
 
+
+
+def generateDistMaps(problem):
+    """
+    cache the distances from each food to each position
+    """
+    gameState = problem.startingGameState
+    wallMap = gameState.getWalls()
+    foods = util.matrixAsList(gameState.getFoods())
+    height = walls.height
+    width = walls.width
+    distMaps = []
+    
+
 def foodHeuristic(state, problem):
     """
     Your heuristic for the FoodSearchProblem goes here.
@@ -435,6 +484,9 @@ def foodHeuristic(state, problem):
     """
     position, foodGrid = state
     "*** YOUR CODE HERE ***"
+    if 'distMaps' not in problem.heuristicInfo:
+        problem.heuristicInfo['distMaps'] = generateDistMaps(problem)
+    distMaps = problem.heuristicInfo['distMaps']
     return 0
 
 class ClosestDotSearchAgent(SearchAgent):
