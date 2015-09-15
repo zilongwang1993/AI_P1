@@ -34,6 +34,7 @@ from game import Actions
 import util
 import time
 import search
+from game import Grid
 
 class GoWestAgent(Agent):
     "An agent that goes West until it can't."
@@ -583,12 +584,526 @@ class AnyFoodSearchProblem(PositionSearchProblem):
 # Mini-contest 1 #
 ##################
 
+def findNearestBadNode(startNodeNum, nodes, edges, nodeEdges, nodeGood, edgeChosen):
+    nodeCount = len(nodes)
+    edgeCount = len(edges)
+    heap = util.PriorityQueue()
+    nodeDists = [None] * nodeCount
+    nodeDists[startNodeNum] = 0
+    nodePaths = [[] for x in range(nodeCount)]
+    nodePaths[startNodeNum] = []
+    heap.push(startNodeNum, 0)
+    while not heap.isEmpty():
+        i = heap.pop()
+        for edgeNum, edgeEnd, neighbor, cost in nodeEdges[i]:
+            if edgeNum in nodePaths[i]:
+                continue
+            if edgeChosen[edgeNum]:
+                nextDist = nodeDists[i] - cost
+            else:
+                nextDist = nodeDists[i] + cost
+            if nodeDists[neighbor] is None or nodeDists[neighbor] > nextDist:
+                nodeDists[neighbor] = nextDist
+                nodePaths[neighbor] = nodePaths[i][:]
+                nodePaths[neighbor].append(edgeNum)
+                heap.push(neighbor, nextDist)
+    nearests = []
+    paths = []
+    costs = []
+    for i in range(nodeCount):
+        if nodeGood[i] or i == startNodeNum:
+            continue
+        nearests.append(i)
+        paths.append(nodePaths[i])
+        costs.append(nodeDists[i])
+    ind = costs.index(min(costs))
+    return nearests[ind], paths[ind], costs[ind]
+
+def generateNodeInfo(nodes, edges, startNode):
+    nodeCount = len(nodes)
+    edgeCount = len(edges)
+    nodeDegs = [0] * nodeCount
+    nodeEdges = [[] for x in range(nodeCount)]
+    for j in range(edgeCount):
+        if edges[j] is None:
+            continue
+        s, e, c = edges[j]
+        nodeDegs[s] += 1
+        nodeDegs[e] += 1
+        nodeEdges[s].append((j, 0, e, c))
+        nodeEdges[e].append((j, 1, s, c))
+    return nodeDegs, nodeEdges
+
+def calcMinPathLength(nodes, edges, startNode):
+    nodeCount = len(nodes)
+    edgeCount = len(edges)
+    nodeDegs, nodeEdges = generateNodeInfo(nodes, edges, startNode)
+    nodeGood = [(deg % 2 == 0) for deg in nodeDegs]
+    nodeGood[startNode] = not nodeGood[startNode]
+    edgeChosen = [False] * edgeCount
+    while sum(nodeGood) < nodeCount - 1:
+        nums = []
+        nearests = []
+        paths = []
+        costs = []
+        for i in range(nodeCount):
+            if nodeGood[i]:
+                continue
+            nearest, path, cost = findNearestBadNode(i, nodes, edges, nodeEdges, nodeGood, edgeChosen)
+            nums.append(i)
+            nearests.append(nearest)
+            paths.append(path)
+            costs.append(cost)
+        ind = costs.index(min(costs))
+        i = nums[ind]
+        nearest = nearests[ind]
+        path = paths[ind]
+        cost = costs[ind]
+        #print "Connecting %d and %d with cost %d" % (i, nearest, cost)
+        nodeGood[i] = not nodeGood[i]
+        nodeGood[nearest] = not nodeGood[nearest]
+        for j in path:
+            edgeChosen[j] = not edgeChosen[j]
+    length = 0
+    #print nodeGood.index(False) #210
+    for j in range(edgeCount):
+        if edges[j] is None:
+            continue
+        if edgeChosen[j]:
+            length += 2 * edges[j][2]
+        else:
+            length += edges[j][2]
+    return length, edgeChosen
+
+def convertMapToGraph(wallMap, foodMap, startPos):
+    width = wallMap.width
+    height = wallMap.height
+    nodes = []
+    nodeNumForPos = {}
+    nodePositions = []
+    edges = []
+    startNode = None
+    for x in range(width):
+        for y in range(height):
+            if (x, y) == startPos:
+                nodeNumForPos[(x, y)] = startNode = len(nodes)
+                nodes.append(((x, y),))
+            elif foodMap[x][y]:
+                #if nodeCount == 210:
+                #    print (startPos, x, y)
+                nodeNumForPos[(x, y)] = len(nodes)
+                nodes.append(((x, y),))
+    for x in range(width):
+        for y in range(height - 1):
+            if (x, y) in nodeNumForPos and (x, y + 1) in nodeNumForPos:
+                edges.append((nodeNumForPos[(x, y)], nodeNumForPos[(x, y + 1)], 1))
+    for x in range(width - 1):
+        for y in range(height):
+            if (x, y) in nodeNumForPos and (x + 1, y) in nodeNumForPos:
+                edges.append((nodeNumForPos[(x, y)], nodeNumForPos[(x + 1, y)], 1))
+    return nodes, edges, startNode
+
+def printChosen(nodes, edges, startNode, edgeChosen, wallMap):
+    nodeCount = len(nodes)
+    edgeCount = len(edges)
+    width = wallMap.width
+    height = wallMap.height
+    nodeChosen = [False] * nodeCount
+    for j in range(edgeCount):
+        if edges[j] is None:
+            continue
+        if edgeChosen[j]:
+            nodeChosen[edges[j][0]] = True
+            nodeChosen[edges[j][1]] = True
+    g = Grid(width, height)
+    for x in range(width):
+        for y in range(height):
+            if wallMap[x][y]:
+                g[x][y] = '%'
+            else:
+                g[x][y] = ' '
+    for i in range(nodeCount):
+        if nodes[i] is None:
+            continue
+        x, y = nodes[i][0]
+        if nodeChosen[i]:
+            g[x][y] = '+'
+        else:
+            g[x][y] = '.'
+    print str(g)
+
+def generateCapMap(nodes, edges, startNode, edgeChosen, wallMap):
+    nodeCount = len(nodes)
+    edgeCount = len(edges)
+    nodeDegs, nodeEdges = generateNodeInfo(nodes, edges, startNode)
+    width = wallMap.width
+    height = wallMap.height
+    nodeChosen = [False] * nodeCount
+    for j in range(len(edges)):
+        if edgeChosen[j]:
+            nodeChosen[edges[j][0]] = True
+            nodeChosen[edges[j][1]] = True
+    capMap = Grid(width, height)
+    for x in range(width):
+        for y in range(height):
+            capMap[x][y] = 0
+    for i in range(nodeCount):
+        if nodes[i] is None:
+            continue
+        x, y = nodes[i][0]
+        if nodeDegs[i] > 2:
+            capMap[x][y] = 2
+        elif nodeChosen[i] and nodeDegs[i] == 2:
+            capMap[x][y] = 2
+        else:
+            capMap[x][y] = 1
+    return capMap
+
+def consolidateCliques(nodes, edges, startNode):
+    nodeCount = len(nodes)
+    edgeCount = len(edges)
+    nodeDegs, nodeEdges = generateNodeInfo(nodes, edges, startNode)
+    nodeColors = [None] * nodeCount # not None = inside the clique of this color
+    colorCount = 0
+    # from every 4-deg nodes, fill into 4-deg and 3-deg nodes
+    for i in range(nodeCount):
+        if nodes[i] is None:
+            continue
+        if nodeDegs[i] != 4 or nodeColors[i] is not None:
+            continue
+        currentColor = colorCount
+        colorCount += 1
+        queue = util.Queue()
+        queue.push(i)
+        found = 0
+        while not queue.isEmpty():
+            i2 = queue.pop()
+            if nodeDegs[i2] < 3 or nodeColors[i2] is not None:
+                continue
+            nodeColors[i2] = currentColor
+            found += 1
+            for edgeNum, edgeEnd, neighbor, cost in nodeEdges[i2]:
+                queue.push(neighbor)
+        # don't create single-node cliques
+        if found <= 1:
+            nodeColors[i] = None
+            colorCount -= 1
+    # fill 1-deg and 2-deg nodes that connects to the same color on its both ends
+    for i in range(nodeCount):
+        if nodes[i] is None:
+            continue
+        if nodeDegs[i] == 2:
+            color = nodeColors[nodeEdges[i][0][2]] # color of destination node of the first edge from i
+            color2 = nodeColors[nodeEdges[i][1][2]] # color of destination node of the second edge from i
+            if color is None or color2 is None or color != color2:
+                continue
+        elif nodeDegs[i] == 1:
+            color = nodeColors[nodeEdges[i][0][2]]
+            if color is None:
+                continue
+        else:
+            continue
+        nodeColors[i] = color
+    # generate cliques
+    #  a hyper node is either an original node or a clique
+    hyperNodes = [None] * nodeCount
+    hyperEdges = edges[:]
+    for i in range(nodeCount):
+        if nodes[i] is not None:
+            hyperNodes[i] = (nodes[i][0], i, None)
+    for color in range(colorCount):
+        hyperNodes.append((None, None, color)) #temporarily set its position to None
+        
+    hyperStartNode = startNode # should not be a part of a clique
+    cliques = [([None] * nodeCount, [None] * edgeCount) for c in range(colorCount)]
+    for i in range(nodeCount):
+        if nodes[i] is None:
+            continue
+        color = nodeColors[i]
+        if color is not None:
+            cliqueNodes, cliqueEdges = cliques[color]
+            # add or modify the node and the edges connect to it
+            hyperNodes[i] = None
+            if hyperNodes[nodeCount + color][0] is None:
+                hyperNodes[nodeCount + color] = list(hyperNodes[nodeCount + color])
+                hyperNodes[nodeCount + color][0] = nodes[i][0]
+                hyperNodes[nodeCount + color] = tuple(hyperNodes[nodeCount + color])
+            cliqueNodes[i] = nodes[i]
+            for edgeNum, edgeEnd, neighbor, cost in nodeEdges[i]:
+                if nodeColors[neighbor] is None:
+                    hyperEdges[edgeNum] = list(hyperEdges[edgeNum])
+                    hyperEdges[edgeNum][edgeEnd] = nodeCount + color
+                    # TODO: estimate a cost for this hyperedge
+                    hyperEdges[edgeNum] = tuple(hyperEdges[edgeNum])
+                else:
+                    if hyperEdges[edgeNum] == None:
+                        continue
+                    cliqueEdges[edgeNum] = edges[edgeNum]
+                    hyperEdges[edgeNum] = None
+    return cliques, hyperNodes, hyperEdges, hyperStartNode
+    
+def spliceEdges(nodes, edges, startNode):
+    # i.e. remove 2-deg nodes
+    nodes = nodes[:]
+    edges = edges[:]
+    nodeCount = len(nodes)
+    edgeCount = len(edges)
+    nodeDegs, nodeEdges = generateNodeInfo(nodes, edges, startNode)
+    edgePaths = [([] if e is not None else None) for e in edges]
+    for i in range(nodeCount):
+        if nodes[i] is None or nodeDegs[i] != 2 or i == startNode:
+            continue
+        edgeNum1, edgeEnd1, neighbor1, cost1 = nodeEdges[i][0]
+        edgeNum2, edgeEnd2, neighbor2, cost2 = nodeEdges[i][1]
+        if neighbor1 == i or neighbor2 == i or edgeNum1 == edgeNum2:
+            continue
+        nodes[i] = None
+        nodeEdges[i] = []
+        edges[edgeNum2] = None
+        cost = cost1 + cost2
+        edges[edgeNum1] = (neighbor1, neighbor2, cost)
+        if edgeEnd1 != 1:
+            edgePaths[edgeNum1].reverse()
+        if edgeEnd2 != 0:
+            edgePaths[edgeNum2].reverse()
+        edgePaths[edgeNum1] = edgePaths[edgeNum1] + [i] + edgePaths[edgeNum2]
+        edgePaths[edgeNum2] = None
+        ind = nodeEdges[neighbor1].index((edgeNum1, 1 - edgeEnd1, i, cost1))
+        nodeEdges[neighbor1][ind] = (edgeNum1, 0, neighbor2, cost)
+        ind = nodeEdges[neighbor2].index((edgeNum2, 1 - edgeEnd2, i, cost2))
+        nodeEdges[neighbor2][ind] = (edgeNum1, 1, neighbor1, cost)
+    return edgePaths, nodes, edges, startNode
+
+def tryRemoveEdge(num, edgeRemoved, nodes, edges, startNode):
+    nodeCount = len(nodes)
+    edgeCount = len(edges)
+    nodeDegs, nodeEdges = generateNodeInfo(nodes, edges, startNode)
+    colorCount = 0
+    nodeColors = [None] * nodeCount
+    for i in range(nodeCount):
+        if nodes[i] is None or nodeColors[i] is not None:
+            continue
+        color = colorCount
+        colorCount += 1
+        queue = util.Queue()
+        queue.push(i)
+        while not queue.isEmpty():
+            i2 = queue.pop()
+            if nodeColors[i2] is not None:
+                continue
+            nodeColors[i2] = color
+            for edgeNum, edgeEnd, neighbor, cost in nodeEdges[i2]:
+                if edgeRemoved[edgeNum] or edgeNum == num:
+                    continue
+                queue.push(neighbor)
+    return (colorCount <= 1)
+
+def iterateEdges(edgeChosen, edgeRemoved, nodes, edges, startNode):
+    nodeCount = len(nodes)
+    edgeCount = len(edges)
+    nodeDegs, nodeEdges = generateNodeInfo(nodes, edges, startNode)
+    edgeUsage = [0] * len(edges)
+    maxUsage = [(2 if edgeChosen[j] else 1 if edges[j] is not None else 0) for j in range(edgeCount)]
+    current = startNode
+    linkedEdges = []
+    while True:
+        bestNum = None
+        bestEnd = None
+        for edgeNum, edgeEnd, neighbor, cost in nodeEdges[current]:
+            if edgeUsage[edgeNum] >= maxUsage[edgeNum]:
+                continue
+            bestNum = edgeNum
+            bestEnd = edgeEnd
+            if edgeUsage[edgeNum] <= maxUsage[edgeNum] - 2:
+                break
+        if bestNum is None:
+            break
+        linkedEdges.append((bestNum, bestEnd))
+        if edgeRemoved[bestNum]:
+            edgeUsage[bestNum] += 2 # "removed" edges are added to the array only once, but this item represents a round trip on the "removed" edge
+        else:
+            edgeUsage[bestNum] += 1
+            current = edges[bestNum][1 - bestEnd]
+    #print "iterate edges: " + str(sum(maxUsage) - sum(edgeUsage)) + " edges left"
+    return linkedEdges
+
+def findShortestPath(nodes, edges, startNode):
+    cliques, hyperNodes, hyperEdges, hyperStartNode = consolidateCliques(nodes, edges, startNode)
+    reducedEdgePaths, reducedNodes, reducedEdges, reducedStartNode = spliceEdges(hyperNodes, hyperEdges, hyperStartNode)
+    reducedLength, reducedEdgeChosen = calcMinPathLength(reducedNodes, reducedEdges, reducedStartNode)
+    reducedEdgeRemoved = [False] * len(reducedEdges)
+    for j in range(len(reducedEdges)):
+        if reducedEdges[j] is None:
+            continue
+        if not reducedEdgeChosen[j]:
+            continue
+        if tryRemoveEdge(j, reducedEdgeRemoved, reducedNodes, reducedEdges, reducedStartNode):
+            #print "Removed an edge of cost " + str(reducedEdges[j][2])
+            reducedEdgeRemoved[j] = True
+        else:
+            #print "Couldn't remove an edge of cost " + str(reducedEdges[j][2])
+            pass
+    linkedEdges = iterateEdges(reducedEdgeChosen, reducedEdgeRemoved, reducedNodes, reducedEdges, reducedStartNode)
+    hyperPath = [reducedStartNode]
+    for edgeNum, edgeEnd in linkedEdges:
+        p = reducedEdgePaths[edgeNum][:]
+        if edgeEnd == 1:
+            p.reverse()
+        if reducedEdgeRemoved[edgeNum]:
+            # append the path and its returning path, skipping the end point
+            hyperPath = hyperPath + p
+            p.reverse()
+            p = p + [reducedEdges[edgeNum][edgeEnd]]
+            hyperPath = hyperPath + p[1:]
+        else:
+            # append the path and the end point
+            hyperPath = hyperPath + p + [reducedEdges[edgeNum][1 - edgeEnd]]
+    #print " Hyperpath contains " + str(len([i for i in hyperPath if i >= len(nodes)])) + " clique nodes"
+    return [i for i in hyperPath if i < len(nodes)]
+
+# Graph = (nodes: Node[], edges: Edge[], startNode: NodeNum)
+# Node = (pos: (x, y), )
+# Edge = (start: NodeNum, end: NodeNum, cost)
+# NodeEdge = (edgenum: EdgeNum, edgeend: 0/1, neighbor: NodeNum, cost)[]
+# Clique = (nodes: Node[], edges: Edge[])
+# HyperNode = (pos: (x, y), original: NodeNum?, clique: NodeNum?)
+
+"""
+class ContestProblem:
+    def __init__(self, startingGameState):
+
+        self.wallMap = self.walls = startingGameState.getWalls()
+        self.width = self.walls.width
+        self.height = self.walls.height
+        self.startingGameState = startingGameState
+        self.foodMap = startingGameState.getFood()
+        pos = startingGameState.getPacmanPosition()
+        visitMap = self.foodMap.copy()
+        for x in range(self.width):
+            for y in range(self.height):
+                visitMap[x][y] = 0
+        self.start = (pos, visitMap)
+        #self.capMap = generateCapMap(nodes, edges, startNode, edgeChosen, self.wallMap)
+        self._expanded = 0
+        self.heuristicInfo = {} # A dictionary for the heuristic to store information
+        
+    def getStartState(self):
+        return self.start
+
+    def isGoalState(self, state):
+        return state[1].count() == 0
+
+    def getSuccessors(self, state):
+        "Returns successor states, the actions they require, and a cost of 1."
+        successors = []
+        if self._expanded % 200 == 0:
+            print self._expanded
+            print state[1].count(1)
+            print state[1].count(2)
+            print state[1].count(3)
+        self._expanded += 1
+        for direction in [Directions.NORTH, Directions.SOUTH, Directions.EAST, Directions.WEST]:
+            x,y = state[0]
+            dx, dy = Actions.directionToVector(direction)
+            nextx, nexty = int(x + dx), int(y + dy)
+            if (not self.walls[nextx][nexty]) and state[1][nextx][nexty] < self.capMap[nextx][nexty]:
+                visitMap = state[1].copy()
+                visitMap[nextx][nexty] += 1
+                successors.append( ( ((nextx, nexty), visitMap), direction, 1) )
+        return successors
+
+    def getCostOfActions(self, actions):
+        "Returns the cost of a particular sequence of actions.  If those actions include an illegal move, return 999999"
+        x,y= self.getStartState()[0]
+        cost = 0
+        for action in actions:
+            # figure out the next state and see whether it's legal
+            #dx, dy = Actions.directionToVector(action)
+            #x, y = int(x + dx), int(y + dy)
+            #if self.walls[x][y]:
+            #    return 999999
+            cost += 1
+        return cost
+
+def contestHeuristic(state, problem):
+    position, foodGrid = state
+    "*** YOUR CODE HERE ***"
+    if 'distMaps' not in problem.heuristicInfo:
+        problem.heuristicInfo['distMaps'] = generateDistMaps(problem)
+    distMaps = problem.heuristicInfo['distMaps']
+    
+    x, y = state[0]
+    visitMap = state[1]
+    height = visitMap.height
+    width = visitMap.width
+    remainingFoods = [(x1, y1) for x1 in range(width) for y1 in range(height) if problem.foodMap[x1][y1] and visitMap[x1][y1] == 0]
+    maxdist = 0
+    #for food in remainingFoods:
+    #    maxdist = max(maxdist, distMaps[food][x][y])
+    return max(maxdist, len(remainingFoods)) * 1.0
+"""
+
+def graphTest(state):
+    #print calcMinPathLength(10, [(0,3,1),(1,1,1),(1,2,1),(2,3,1),(3,4,1),(2,5,1),
+    #    (3,6,1),(6,7,1),(5,8,10),(5,8,20),(6,9,1)], 8)
+    nodes, edges, startNode = convertMapToGraph(startingGameState.getWalls(), startingGameState.getFood(), startingGameState.getPacmanPosition())
+    #print len(nodes)
+    #print len(edges)
+    #print startNode
+    length, edgeChosen = calcMinPathLength(nodes, edges, startNode)
+    #print length
+    cliques, hyperNodes, hyperEdges, hyperStartNode = consolidateCliques(nodes, edges, startNode)
+    reducedEdgePaths, reducedNodes, reducedEdges, reducedStartNode = spliceEdges(hyperNodes, hyperEdges, hyperStartNode)
+    printChosen(reducedNodes, reducedEdges, reducedStartNode, [False] * len(reducedEdges), startingGameState.getWalls())
+    print len([n for n in reducedNodes if n is not None])
+    print len([e for e in reducedEdges if e is not None])
+    print "Sum of edge costs:"
+    print sum([e[2] for e in reducedEdges if e is not None])
+    print sum([e[2] for e in hyperEdges if e is not None])
+    printChosen(hyperNodes, hyperEdges, hyperStartNode, edgeChosen, startingGameState.getWalls())
+    print length
+    for cliqueNodes, cliqueEdges in cliques:
+        printChosen(cliqueNodes, cliqueEdges, startNode, edgeChosen, startingGameState.getWalls())
+        print len([n for n in cliqueNodes if n is not None])
+        print len([e for e in cliqueEdges if e is not None])
+    hyperLength, hyperEdgeChosen = calcMinPathLength(hyperNodes, hyperEdges, hyperStartNode)
+    printChosen(hyperNodes, hyperEdges, hyperStartNode, hyperEdgeChosen, startingGameState.getWalls())
+    print hyperLength
+    quit()
+
 class ApproximateSearchAgent(Agent):
     "Implement your contest entry here.  Change anything but the class name."
 
     def registerInitialState(self, state):
         "This method is called before any moves are made."
         "*** YOUR CODE HERE ***"
+        #problem = ContestProblem(state)
+        #func = getattr(search, 'aStarSearch')
+        #path = func(problem, contestHeuristic)
+        #print path
+        #print len(path)
+        #print problem.getCostOfActions(path)
+        nodes, edges, startNode = convertMapToGraph(state.getWalls(), state.getFood(), state.getPacmanPosition())
+        path = findShortestPath(nodes, edges, startNode)
+        actions = []
+        for i in range(len(path) - 1):
+            pos = nodes[path[i]][0]
+            nextpos = nodes[path[i + 1]][0]
+            if nextpos == (pos[0] + 1, pos[1]):
+                action = Directions.EAST
+            elif nextpos == (pos[0] - 1, pos[1]):
+                action = Directions.WEST
+            elif nextpos == (pos[0], pos[1] + 1):
+                action = Directions.NORTH
+            elif nextpos == (pos[0], pos[1] - 1):
+                action = Directions.SOUTH
+            else:
+                print "Cannot find action from " + str(pos) + " to " + str(nextpos)
+                action = None
+            actions.append(action)
+        print "Found a path with " + str(len(actions)) + " actions"
+        self.actions = actions
+        self.time = 0
 
     def getAction(self, state):
         """
@@ -597,7 +1112,9 @@ class ApproximateSearchAgent(Agent):
         Directions.{North, South, East, West, Stop}
         """
         "*** YOUR CODE HERE ***"
-        util.raiseNotDefined()
+        action = self.actions[self.time]
+        self.time += 1
+        return action
 
 def mazeDistance(point1, point2, gameState):
     """
