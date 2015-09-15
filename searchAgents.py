@@ -584,6 +584,26 @@ class AnyFoodSearchProblem(PositionSearchProblem):
 # Mini-contest 1 #
 ##################
 
+"""
+Idea:
+
+There are many cycles in the maze of "bigSearch", so it's even hard for human to find the optimal
+route. Fortunately, we can use tools in graph theory to handle this type of problem. To be specific,
+we need to find a shortest path that goes though the "food graph". This is similar to the "Eulerian
+graph" problem.
+
+So the main part of our code is to modify the graph into an Eulerian graph, by specifying which
+edges should be visited twice (note that we have to visit each edge at least once to eat the food).
+The algorithm is able to find this set of edges that has the lowest cost and also determines where
+the Pacman should stop.
+
+Another part of our code is to deal with the bottom left and the top right area of the graph, where
+there are open spaces, because the previous algorithm doesn't give an optimal solution at these
+places. We first idenfity all this kind of open spaces and figure out how many times and where we
+enter and leave each of them, and then find the optimal route inside each of them by solving a
+search problem with the A* search algorithm.
+"""
+
 def findNearestBadNode(startNodeNum, nodes, edges, nodeEdges, nodeGood, edgeChosen):
     nodeCount = len(nodes)
     edgeCount = len(edges)
@@ -619,7 +639,7 @@ def findNearestBadNode(startNodeNum, nodes, edges, nodeEdges, nodeGood, edgeChos
     ind = costs.index(min(costs))
     return nearests[ind], paths[ind], costs[ind]
 
-def generateNodeInfo(nodes, edges, startNode):
+def generateNodeInfo(nodes, edges):
     nodeCount = len(nodes)
     edgeCount = len(edges)
     nodeDegs = [0] * nodeCount
@@ -637,7 +657,7 @@ def generateNodeInfo(nodes, edges, startNode):
 def calcMinPathLength(nodes, edges, startNode):
     nodeCount = len(nodes)
     edgeCount = len(edges)
-    nodeDegs, nodeEdges = generateNodeInfo(nodes, edges, startNode)
+    nodeDegs, nodeEdges = generateNodeInfo(nodes, edges)
     nodeGood = [(deg % 2 == 0) for deg in nodeDegs]
     nodeGood[startNode] = not nodeGood[startNode]
     edgeChosen = [False] * edgeCount
@@ -732,37 +752,10 @@ def printChosen(nodes, edges, startNode, edgeChosen, wallMap):
             g[x][y] = '.'
     print str(g)
 
-def generateCapMap(nodes, edges, startNode, edgeChosen, wallMap):
-    nodeCount = len(nodes)
-    edgeCount = len(edges)
-    nodeDegs, nodeEdges = generateNodeInfo(nodes, edges, startNode)
-    width = wallMap.width
-    height = wallMap.height
-    nodeChosen = [False] * nodeCount
-    for j in range(len(edges)):
-        if edgeChosen[j]:
-            nodeChosen[edges[j][0]] = True
-            nodeChosen[edges[j][1]] = True
-    capMap = Grid(width, height)
-    for x in range(width):
-        for y in range(height):
-            capMap[x][y] = 0
-    for i in range(nodeCount):
-        if nodes[i] is None:
-            continue
-        x, y = nodes[i][0]
-        if nodeDegs[i] > 2:
-            capMap[x][y] = 2
-        elif nodeChosen[i] and nodeDegs[i] == 2:
-            capMap[x][y] = 2
-        else:
-            capMap[x][y] = 1
-    return capMap
-
 def consolidateCliques(nodes, edges, startNode):
     nodeCount = len(nodes)
     edgeCount = len(edges)
-    nodeDegs, nodeEdges = generateNodeInfo(nodes, edges, startNode)
+    nodeDegs, nodeEdges = generateNodeInfo(nodes, edges)
     nodeColors = [None] * nodeCount # not None = inside the clique of this color
     colorCount = 0
     # from every 4-deg nodes, fill into 4-deg and 3-deg nodes
@@ -848,7 +841,7 @@ def spliceEdges(nodes, edges, startNode):
     edges = edges[:]
     nodeCount = len(nodes)
     edgeCount = len(edges)
-    nodeDegs, nodeEdges = generateNodeInfo(nodes, edges, startNode)
+    nodeDegs, nodeEdges = generateNodeInfo(nodes, edges)
     edgePaths = [([] if e is not None else None) for e in edges]
     for i in range(nodeCount):
         if nodes[i] is None or nodeDegs[i] != 2 or i == startNode:
@@ -877,7 +870,7 @@ def spliceEdges(nodes, edges, startNode):
 def tryRemoveEdge(num, edgeRemoved, nodes, edges, startNode):
     nodeCount = len(nodes)
     edgeCount = len(edges)
-    nodeDegs, nodeEdges = generateNodeInfo(nodes, edges, startNode)
+    nodeDegs, nodeEdges = generateNodeInfo(nodes, edges)
     colorCount = 0
     nodeColors = [None] * nodeCount
     for i in range(nodeCount):
@@ -899,9 +892,11 @@ def tryRemoveEdge(num, edgeRemoved, nodes, edges, startNode):
     return (colorCount <= 1)
 
 def iterateEdges(edgeChosen, edgeRemoved, nodes, edges, startNode):
+    # TODO: Although theoritically there always exist a way to iterate through the edges as long as all edges are connected and paired,
+    #       I didn't bother to write the prefect code so I just used the greedy method, which works fine on the test map only after the cliques have been consolidated.
     nodeCount = len(nodes)
     edgeCount = len(edges)
-    nodeDegs, nodeEdges = generateNodeInfo(nodes, edges, startNode)
+    nodeDegs, nodeEdges = generateNodeInfo(nodes, edges)
     edgeUsage = [0] * len(edges)
     maxUsage = [(2 if edgeChosen[j] else 1 if edges[j] is not None else 0) for j in range(edgeCount)]
     current = startNode
@@ -924,8 +919,79 @@ def iterateEdges(edgeChosen, edgeRemoved, nodes, edges, startNode):
         else:
             edgeUsage[bestNum] += 1
             current = edges[bestNum][1 - bestEnd]
-    #print "iterate edges: " + str(sum(maxUsage) - sum(edgeUsage)) + " edges left"
+    if sum(maxUsage) - sum(edgeUsage) > 0:
+        print "Warning: iterate edges: " + str(sum(maxUsage) - sum(edgeUsage)) + " edges left"
     return linkedEdges
+
+def expandPathFragmentInClique(clique, hyperPathFragment, hyperNodes, hyperEdges, hyperStartNode, nodes, edges, startNode):
+    cliqueNodes, cliqueEdges = clique
+    cliqueNodeCount = len(cliqueNodes)
+    cliqueEdgeCount = len(cliqueEdges)
+    hyperNodeDegs, hyperNodeEdges = generateNodeInfo(hyperNodes, hyperEdges)
+    nodeDegs, nodeEdges = generateNodeInfo(nodes, edges)
+    
+    smallNodes = []
+    smallEdges = []
+    forwardNodeMapping = {}
+    backwardNodeMapping = {}
+    # minimize the size of the node array to make the search algorithm faster
+    for i in range(cliqueNodeCount):
+        if cliqueNodes[i] is None:
+            continue
+        forwardNodeMapping[i] = len(smallNodes)
+        backwardNodeMapping[len(smallNodes)] = i
+        smallNodes.append(cliqueNodes[i])
+    for j in range(cliqueEdgeCount):
+        if cliqueEdges[j] is None:
+            continue
+        start, end, cost = cliqueEdges[j]
+        smallEdges.append((forwardNodeMapping[start], forwardNodeMapping[end], cost)) # cost is not used
+    commands = []
+    for hyperNodeNum1, hyperNodeNum2 in hyperPathFragment:
+        if hyperNodes[hyperNodeNum1][2] is not None: # leave the clique
+            # hack: the edgenum is missing in the fragment data, so let's find the edge, which should be unique given how we build cliques
+            edgeNum = None
+            edgeEnd = None
+            for hyperEdgeNum, hyperEdgeEnd, hyperNeighbor, hyperCost in hyperNodeEdges[hyperNodeNum1]:
+                if hyperNeighbor == hyperNodeNum2:
+                    edgeNum = hyperEdgeNum
+                    edgeEnd = hyperEdgeEnd
+                    break
+            command = (False, forwardNodeMapping[edges[edgeNum][edgeEnd]])
+        else: # enter the clique
+            edgeNum = None
+            edgeEnd = None
+            for hyperEdgeNum, hyperEdgeEnd, hyperNeighbor, hyperCost in hyperNodeEdges[hyperNodeNum2]:
+                if hyperNeighbor == hyperNodeNum1:
+                    edgeNum = hyperEdgeNum
+                    edgeEnd = hyperEdgeEnd
+                    break
+            command = (True, forwardNodeMapping[edges[edgeNum][edgeEnd]])
+        commands.append(command)
+    problem = CliqueProblem(smallNodes, smallEdges, commands, None)
+    func = getattr(search, 'aStarSearch')
+    actions = func(problem, cliqueHeuristic)
+    print "CliqueProblem: expanded %d nodes" % problem._expanded
+    #print actions
+    #print len(actions)
+    #print problem.getCostOfActions(actions)
+    
+    pathFragment = []
+    lastNodeNum = None
+    for commandNum, nodeNum in actions:
+        if commandNum is not None:
+            commandIsEnter, commandNodeNum = commands[commandNum]
+            pathFragment.append([])
+            if commandIsEnter:
+                pathFragment[-1].append((hyperPathFragment[commandNum][0], backwardNodeMapping[commandNodeNum]))
+                lastNodeNum = commandNodeNum
+            else:
+                pathFragment[-1].append((backwardNodeMapping[commandNodeNum], hyperPathFragment[commandNum][1]))
+                lastNodeNum = None
+        else:
+            pathFragment[-1].append((backwardNodeMapping[lastNodeNum], backwardNodeMapping[nodeNum]))
+            lastNodeNum = nodeNum
+    return pathFragment
 
 def findShortestPath(nodes, edges, startNode):
     cliques, hyperNodes, hyperEdges, hyperStartNode = consolidateCliques(nodes, edges, startNode)
@@ -944,7 +1010,7 @@ def findShortestPath(nodes, edges, startNode):
             #print "Couldn't remove an edge of cost " + str(reducedEdges[j][2])
             pass
     linkedEdges = iterateEdges(reducedEdgeChosen, reducedEdgeRemoved, reducedNodes, reducedEdges, reducedStartNode)
-    hyperPath = [reducedStartNode]
+    hyperPath = [hyperStartNode]
     for edgeNum, edgeEnd in linkedEdges:
         p = reducedEdgePaths[edgeNum][:]
         if edgeEnd == 1:
@@ -959,7 +1025,30 @@ def findShortestPath(nodes, edges, startNode):
             # append the path and the end point
             hyperPath = hyperPath + p + [reducedEdges[edgeNum][1 - edgeEnd]]
     #print " Hyperpath contains " + str(len([i for i in hyperPath if i >= len(nodes)])) + " clique nodes"
-    return [i for i in hyperPath if i < len(nodes)]
+    # compute the path inside each clique
+    parts = [(hyperPath[k], hyperPath[k + 1]) for k in range(len(hyperPath) - 1)]
+    cliquePartNumLists = [[] for c in range(len(cliques))]
+    for partNum in range(len(parts)):
+        cliqueNum = hyperNodes[parts[partNum][0]][2]
+        if cliqueNum is None:
+            cliqueNum = hyperNodes[parts[partNum][1]][2]
+        if cliqueNum is not None:
+            cliquePartNumLists[cliqueNum].append(partNum)
+    expandedPartLists = [[part] for part in parts]
+    for cliqueNum in range(len(cliques)):
+        fragment = []
+        for ind in range(len(cliquePartNumLists[cliqueNum])):
+            fragment.append(parts[cliquePartNumLists[cliqueNum][ind]])
+        expandedFragment = expandPathFragmentInClique(cliques[cliqueNum], fragment, hyperNodes, hyperEdges, hyperStartNode, nodes, edges, startNode)
+        for ind in range(len(cliquePartNumLists[cliqueNum])):
+            expandedPartLists[cliquePartNumLists[cliqueNum][ind]] = expandedFragment[ind]
+    parts = [part for partList in expandedPartLists for part in partList]
+    path = [parts[0][0], parts[0][1]]
+    for i in range(len(parts) - 1):
+        if parts[i + 1][0] != parts[i][1]:
+            print "Warning: findShortestPath: parts are not connected"
+        path.append(parts[i + 1][1])
+    return path
 
 # Graph = (nodes: Node[], edges: Edge[], startNode: NodeNum)
 # Node = (pos: (x, y), )
@@ -968,82 +1057,88 @@ def findShortestPath(nodes, edges, startNode):
 # Clique = (nodes: Node[], edges: Edge[])
 # HyperNode = (pos: (x, y), original: NodeNum?, clique: NodeNum?)
 
-"""
-class ContestProblem:
-    def __init__(self, startingGameState):
-
-        self.wallMap = self.walls = startingGameState.getWalls()
-        self.width = self.walls.width
-        self.height = self.walls.height
-        self.startingGameState = startingGameState
-        self.foodMap = startingGameState.getFood()
-        pos = startingGameState.getPacmanPosition()
-        visitMap = self.foodMap.copy()
-        for x in range(self.width):
-            for y in range(self.height):
-                visitMap[x][y] = 0
-        self.start = (pos, visitMap)
-        #self.capMap = generateCapMap(nodes, edges, startNode, edgeChosen, self.wallMap)
+class CliqueProblem:
+    def __init__(self, nodes, edges, commands, initialNodeNum):
+        """
+        nodes: Node[]
+        edges: Edge[]
+        commands: (isenter: bool, nodenum: NodeNum)[]
+        initialNode: NodeNum?
+        State = (pos: NodeNum?, command: CommandNum, visited: bool[])
+        Action = (command: CommandNum?, moveto: NodeNum?)
+        """
+        self.nodes = nodes
+        self.nodeCount = len(nodes)
+        self.edges = edges
+        self.edgeCount = len(edges)
+        self.nodeDegs, self.nodeEdges = generateNodeInfo(nodes, edges)
+        self.commands = commands
+        self.commandCount = len(commands)
+        visited = [False] * self.nodeCount
+        self.validNodeCount = len([n for n in nodes if n is not None])
+        if initialNodeNum is not None:
+            visited[initialNodeNum] = True
+        self.startState = (initialNodeNum, 0, tuple(visited))
         self._expanded = 0
-        self.heuristicInfo = {} # A dictionary for the heuristic to store information
-        
+
     def getStartState(self):
-        return self.start
+        return self.startState
 
     def isGoalState(self, state):
-        return state[1].count() == 0
+        nodeNum, commandNum, visited = state
+        return (commandNum == self.commandCount and sum(visited) == self.validNodeCount)
 
     def getSuccessors(self, state):
-        "Returns successor states, the actions they require, and a cost of 1."
         successors = []
-        if self._expanded % 200 == 0:
-            print self._expanded
-            print state[1].count(1)
-            print state[1].count(2)
-            print state[1].count(3)
         self._expanded += 1
-        for direction in [Directions.NORTH, Directions.SOUTH, Directions.EAST, Directions.WEST]:
-            x,y = state[0]
-            dx, dy = Actions.directionToVector(direction)
-            nextx, nexty = int(x + dx), int(y + dy)
-            if (not self.walls[nextx][nexty]) and state[1][nextx][nexty] < self.capMap[nextx][nexty]:
-                visitMap = state[1].copy()
-                visitMap[nextx][nexty] += 1
-                successors.append( ( ((nextx, nexty), visitMap), direction, 1) )
+        nodeNum, commandNum, visited = state
+        # execute a command
+        if commandNum < self.commandCount:
+            commandIsEnter, commandNodeNum = self.commands[commandNum]
+            if commandIsEnter and nodeNum == None:
+                nextVisited = list(visited)
+                nextVisited[commandNodeNum] = True
+                nextState = (commandNodeNum, commandNum + 1, tuple(nextVisited))
+                action = (commandNum, None)
+                cost = 1
+                successors.append((nextState, action, cost))
+            elif not commandIsEnter and nodeNum == commandNodeNum:
+                nextState = (None, commandNum + 1, visited)
+                action = (commandNum, None)
+                cost = 0
+                successors.append((nextState, action, cost))
+        # or move into a position
+        if nodeNum is not None:
+            for edgeNum, edgeEnd, neighbor, cost in self.nodeEdges[nodeNum]:
+                nextVisited = list(visited)
+                nextVisited[neighbor] = True
+                nextState = (neighbor, commandNum, tuple(nextVisited))
+                action = (None, neighbor)
+                cost = 1
+                successors.append((nextState, action, cost))
         return successors
 
     def getCostOfActions(self, actions):
-        "Returns the cost of a particular sequence of actions.  If those actions include an illegal move, return 999999"
-        x,y= self.getStartState()[0]
         cost = 0
         for action in actions:
-            # figure out the next state and see whether it's legal
-            #dx, dy = Actions.directionToVector(action)
-            #x, y = int(x + dx), int(y + dy)
-            #if self.walls[x][y]:
-            #    return 999999
-            cost += 1
+            commandNum, nodeNum = action
+            if commandNum is not None:
+                cost += 1 if self.commands[commandNum][0] else 0
+            else:
+                cost += 1
         return cost
 
-def contestHeuristic(state, problem):
-    position, foodGrid = state
-    "*** YOUR CODE HERE ***"
-    if 'distMaps' not in problem.heuristicInfo:
-        problem.heuristicInfo['distMaps'] = generateDistMaps(problem)
-    distMaps = problem.heuristicInfo['distMaps']
-    
-    x, y = state[0]
-    visitMap = state[1]
-    height = visitMap.height
-    width = visitMap.width
-    remainingFoods = [(x1, y1) for x1 in range(width) for y1 in range(height) if problem.foodMap[x1][y1] and visitMap[x1][y1] == 0]
-    maxdist = 0
-    #for food in remainingFoods:
-    #    maxdist = max(maxdist, distMaps[food][x][y])
-    return max(maxdist, len(remainingFoods)) * 1.0
-"""
+def cliqueHeuristic(state, problem):
+    nodeNum, commandNum, visited = state
+    return problem.validNodeCount - sum(visited)
 
 def graphTest(state):
+    problem = CliqueProblem([None,"1","2","3"], [(1,2,1),(2,3,1)], [(True,2),(False,3),(True,3)], None)
+    func = getattr(search, 'aStarSearch')
+    path = func(problem, cliqueHeuristic)
+    print path
+    print len(path)
+    print problem.getCostOfActions(path)
     #print calcMinPathLength(10, [(0,3,1),(1,1,1),(1,2,1),(2,3,1),(3,4,1),(2,5,1),
     #    (3,6,1),(6,7,1),(5,8,10),(5,8,20),(6,9,1)], 8)
     nodes, edges, startNode = convertMapToGraph(startingGameState.getWalls(), startingGameState.getFood(), startingGameState.getPacmanPosition())
@@ -1077,12 +1172,6 @@ class ApproximateSearchAgent(Agent):
     def registerInitialState(self, state):
         "This method is called before any moves are made."
         "*** YOUR CODE HERE ***"
-        #problem = ContestProblem(state)
-        #func = getattr(search, 'aStarSearch')
-        #path = func(problem, contestHeuristic)
-        #print path
-        #print len(path)
-        #print problem.getCostOfActions(path)
         nodes, edges, startNode = convertMapToGraph(state.getWalls(), state.getFood(), state.getPacmanPosition())
         path = findShortestPath(nodes, edges, startNode)
         actions = []
